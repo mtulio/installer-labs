@@ -1,5 +1,16 @@
 import base64, textwrap
 
+# MAINTAINER NOTE, not shipped to the node. SCRIPT below must not name the
+# literal substitution placeholder (CLUSTER_ID) even inside a comment. An
+# earlier revision wrote `CLUSTER-ID-master-0` as the displayName example and
+# a run's placeholder assertion failed on it -- this manifest is not a
+# substitution input, so the token was never going to be rewritten. The
+# wording is `<infraID>-master-0` instead.
+#
+# That reword was once applied to the emitted file and not back here, so
+# regenerating silently resurrected the token. Fix the generator, never the
+# output: the output is overwritten by the next run.
+
 SCRIPT = """#!/bin/bash
 # Set this node's hostname from the OCI instance metadata service.
 #
@@ -36,7 +47,7 @@ esac
 # `hostname` is absent unless the VNIC carries a hostnameLabel, and CAPOCI does
 # not set one -- curl -f then exits non-zero on the 404 and the loop falls
 # through to displayName, which CAPOCI sets to the Machine name
-# (e.g. CLUSTER-ID-master-0). Both are tried every round so that a late-arriving
+# (e.g. <infraID>-master-0). Both are tried every round so that a late-arriving
 # hostname still wins.
 name=""
 for _ in $(seq 1 30); do
@@ -92,7 +103,14 @@ StandardError=journal+console
 WantedBy=multi-user.target
 """
 
-HEADER = """# Set every node's hostname from the OCI instance metadata service.
+HEADER = """# yamllint disable rule:line-length
+#
+# The long line is the Ignition data URL carrying the base64 of the script
+# reproduced in full below. Ignition requires file contents as a single data
+# URL, so it cannot be wrapped; the plaintext under it is what a reviewer
+# should read instead.
+#
+# Set every node's hostname from the OCI instance metadata service.
 #
 # The other half of what `platform: external` needs before a node can go Ready.
 # 99_external-00-kubelet-providerid-{role}.yaml gives the node a provider ID;
@@ -110,7 +128,6 @@ HEADER = """# Set every node's hostname from the OCI instance metadata service.
 # reviewed without decoding:
 #
 {plaintext}
----
 apiVersion: machineconfiguration.openshift.io/v1
 kind: MachineConfig
 metadata:
