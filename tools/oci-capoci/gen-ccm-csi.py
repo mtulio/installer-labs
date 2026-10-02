@@ -22,10 +22,18 @@ in all eighteen headers.
 
 import hashlib
 import pathlib
+import subprocess
 
 import yaml
 
-SRC = pathlib.Path("oci-openshift/custom_manifests/oci-ccm-csi-drivers/v1.34.0")
+# Upstream. `oracle-quickstart/oci-openshift` is the real home of this bundle;
+# `oracle/oci-openshift` does not exist and an earlier revision of these
+# headers named it.
+UPSTREAM_URL = "https://github.com/oracle-quickstart/oci-openshift"
+UPSTREAM_ROOT = pathlib.Path("oci-openshift")
+BUNDLE_PATH = "custom_manifests/oci-ccm-csi-drivers/v1.34.0"
+
+SRC = UPSTREAM_ROOT / BUNDLE_PATH
 DST = pathlib.Path(
     "installer/upi/external/examples/oci-capoci/external-install/extra-manifests"
 )
@@ -36,13 +44,29 @@ DST = pathlib.Path(
 CCM_IMAGE_OLD = "ghcr.io/nikhisin3001/cloud-provider-oci:v1.34.0"
 CCM_IMAGE_NEW = "ghcr.io/oracle/cloud-provider-oci:v1.34.0"
 
-HEADER = """# yamllint disable rule:indentation rule:brackets
+HEADER = """# yamllint disable rule:indentation rule:brackets rule:line-length rule:comments
 #
 # COPIED, NOT WRITTEN -- object {n} of {total} from Oracle's bundle.
 #
-#   source  oci-openshift/custom_manifests/oci-ccm-csi-drivers/v1.34.0/{src}
-#   sha256  {sha}
-#   object  {kind}/{name}
+#   upstream  {url}
+#   commit    {commit}
+#   ref       {ref}
+#   path      {bundle}/{src}
+#   sha256    {sha}
+#   object    {kind}/{name}
+#
+# TRACKING UPSTREAM DRIFT. The permalink to the exact bytes this was copied
+# from is the upstream URL, then `/blob/`, then the commit, then the path --
+# all three are above. To check for drift, hash the current upstream file and
+# compare with the sha256 above:
+#
+#   git -C oci-openshift fetch origin && \\
+#     git -C oci-openshift show origin/main:{bundle}/{src} | sha256sum
+#
+# If it differs, re-run tools/oci-capoci/gen-ccm-csi.py against the new
+# checkout. Do not hand-edit this file: it is generated, and a hand edit makes
+# the sha256 above a lie, which is the one thing that would make this header
+# worse than no header at all.
 #
 # One object per file because the bootstrap node applies this directory one
 # object per file and silently drops the rest of a multi-document one; the
@@ -51,11 +75,14 @@ HEADER = """# yamllint disable rule:indentation rule:brackets
 # Secrets are not, what the two deltas against upstream are, and the
 # partner-manifest supply-chain gap this bundle exposes.
 #
-# The yamllint disable is cosmetic only -- Oracle indents sequences and writes
-# `[ "x" ]`, both of which this repository's .yamllint rejects. Reformatting a
-# vendored file was tried and broke it; see oci-ccm-csi-bundle.md.
-{delta}---
-"""
+# The yamllint disable is cosmetic only, and every rule in it is a house style
+# this repository applies to code it writes: Oracle indents sequences, writes
+# `[ "x" ]`, puts one space before a trailing comment and runs container args
+# past 120 columns. Reformatting a vendored file to satisfy them was tried and
+# broke it, and it would also destroy the one property that makes the sha256
+# above useful -- that these bytes can be diffed against upstream. See
+# oci-ccm-csi-bundle.md.
+{delta}"""
 
 DELTA_NONE = "#\n"
 
@@ -70,6 +97,42 @@ DELTA_CCM_IMAGE = """#
 
 def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def git(*args):
+    """Read something out of the upstream clone, or "" if it cannot be read.
+
+    Degrades rather than failing: the sha256 is the authoritative provenance
+    and is computed from the bytes themselves. The commit and ref make the
+    bytes locatable, which is a convenience on top of that -- not a reason to
+    refuse to generate.
+    """
+    try:
+        return subprocess.run(
+            ["git", "-C", str(UPSTREAM_ROOT), *args],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+
+
+def upstream_provenance():
+    """Commit and human-readable ref of the checkout being copied from."""
+    commit = git("rev-parse", "HEAD") or "UNKNOWN (not a git checkout)"
+
+    tag = git("describe", "--tags", "--exact-match")
+    date = git("show", "-s", "--format=%cs", "HEAD")
+    ref = ", ".join(part for part in (f"tag {tag}" if tag else "", date) if part)
+
+    # An uncommitted change in the clone means the sha256 below does not
+    # correspond to anything fetchable, which is exactly the case a reader
+    # must not be left to discover by a failing diff.
+    if git("status", "--porcelain", "--", BUNDLE_PATH):
+        ref = (ref + ", " if ref else "") + "LOCALLY MODIFIED -- not fetchable"
+
+    return commit, ref or "unknown"
 
 
 def split_documents(text):
@@ -94,6 +157,7 @@ def emit(src_name, prefix, day2_kinds=frozenset()):
     src = SRC / src_name
     text = src.read_text()
     digest = sha256(src)
+    commit, ref = upstream_provenance()
 
     raw_docs = split_documents(text)
     parsed = [yaml.safe_load(d) for d in raw_docs]
@@ -129,6 +193,10 @@ def emit(src_name, prefix, day2_kinds=frozenset()):
         header = HEADER.format(
             n=index + 1,
             total=total,
+            url=UPSTREAM_URL,
+            commit=commit,
+            ref=ref,
+            bundle=BUNDLE_PATH,
             src=src_name,
             sha=digest,
             kind=kind,
