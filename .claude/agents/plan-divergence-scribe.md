@@ -1,0 +1,1 @@
+../../.agents/agents/plan-divergence-scribe.md

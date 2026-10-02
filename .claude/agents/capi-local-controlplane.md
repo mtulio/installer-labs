@@ -1,0 +1,1 @@
+../../.agents/agents/capi-local-controlplane.md

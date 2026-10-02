@@ -1,0 +1,1 @@
+../../.agents/agents/pilot-adversary.md
